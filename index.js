@@ -32,7 +32,27 @@ async function run() {
 
     // from here start api 
 
+    const database = client.db('bloodDonationDB');
+    const userCollections = database.collection('user')
 
+    app.post('/users', async(req, res)=>{
+      const user = req.body ;
+      user.role = 'dooner';
+      user.createAt =  new Date()
+      
+      const result = await userCollections.insertOne(user);
+      res.send(result)
+    })
+
+
+    app.get('/users/role/:email', async (req, res) =>{
+      const {email}= req.params
+
+      const query  ={email:email}
+      const  result = await userCollections.findOne(query)
+      console.log(result);
+      res.send(result)
+    })
 
 
     await client.db("admin").command({ ping: 1 });
