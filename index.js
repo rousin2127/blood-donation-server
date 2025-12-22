@@ -1,4 +1,4 @@
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion ,ObjectId} = require('mongodb');
 const express = require('express');
 const cors = require('cors')
 require('dotenv').config()
@@ -24,7 +24,7 @@ admin.initializeApp({
 
 const verifyFBToken = async (req, res, next) => {
   const token = req.headers.authorization;
-
+ 
   if (!token) {
     return res.status(401).send({ message: 'unauthorize access' })
   }
@@ -39,8 +39,6 @@ const verifyFBToken = async (req, res, next) => {
     return res.status(401).send({ message: 'unauthorize access' })
   }
 }
-
-
 
 
 
@@ -75,13 +73,19 @@ async function run() {
 
     app.post('/users', async (req, res) => {
       const user = req.body;
-      user.role = 'dooner';
+      user.role = 'donor';
       user.status = 'active'
       user.createAt = new Date()
 
       const result = await userCollections.insertOne(user);
       res.send(result)
     })
+
+    app.get('/users',verifyFBToken, async (req, res)=>{
+      const result  = await userCollections.find().toArray();
+      res.status(200).send(result)
+    })
+
 
 
     app.get('/users/role/:email', async (req, res) => {
@@ -92,6 +96,46 @@ async function run() {
       console.log(result);
       res.send(result)
     })
+
+
+
+// block user
+
+
+    app.patch('/users/block/:id', verifyFBToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const filter = { _id: new ObjectId(id) };
+    const updateDoc = {
+      $set: { status: 'blocked' }
+    };
+    
+    const result = await userCollections.updateOne(filter, updateDoc);
+    res.send(result);
+  } catch (error) {
+    console.error("Error blocking user:", error);
+    res.status(500).send({ message: 'Failed to block user' });
+  }
+});
+
+// Unblock a user (update status to 'active')
+app.patch('/users/unblock/:id', verifyFBToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const filter = { _id: new ObjectId(id) };
+    const updateDoc = {
+      $set: { status: 'active' }
+    };
+    
+    const result = await userCollections.updateOne(filter, updateDoc);
+    res.send(result);
+  } catch (error) {
+    console.error("Error unblocking user:", error);
+    res.status(500).send({ message: 'Failed to unblock user' });
+  }
+});
+
+
 
     app.post("/requests", verifyFBToken, async (req, res) => {
       const data = req.body;
