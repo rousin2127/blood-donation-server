@@ -1,6 +1,7 @@
+const { MongoClient, ServerApiVersion } = require('mongodb');
 const express = require('express');
-const cors = require('cors') 
- require('dotenv').config()
+const cors = require('cors')
+require('dotenv').config()
 const port = process.env.PORT || 5000
 
 const app = express();
@@ -8,7 +9,43 @@ app.use(cors());
 app.use(express.json())
 
 
-const { MongoClient, ServerApiVersion } = require('mongodb');
+
+// const serviceAccount = require("./firebase-admin-key.json");
+const admin = require("firebase-admin");
+
+const decoded = Buffer.from(process.env.FB_KEY_API, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+
+
+
+const verifyFBToken = async (req, res, next) => {
+  const token = req.headers.authorization;
+
+  if (!token) {
+    return res.status(401).send({ message: 'unauthorize access' })
+  }
+  try {
+    const idToken = token.split(' ')[1]
+    const decoded = await admin.auth().verifyIdToken(idToken)
+    console.log('decoded info :', decoded)
+    req.decoded_email = decoded.email
+    next()
+  }
+  catch (error) {
+    return res.status(401).send({ message: 'unauthorize access' })
+  }
+}
+
+
+
+
+
+
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${encodeURIComponent(
   process.env.DB_PASS
 )}@${process.env.DB_HOST}/${process.env.DB_NAME}?retryWrites=true&w=majority`;
@@ -36,32 +73,33 @@ async function run() {
     const userCollections = database.collection('user')
     const requestsCollection = database.collection('request')
 
-    app.post('/users', async(req, res)=>{
-      const user = req.body ;
+    app.post('/users', async (req, res) => {
+      const user = req.body;
       user.role = 'dooner';
-      user.status= 'active'
-      user.createAt =  new Date()
-      
+      user.status = 'active'
+      user.createAt = new Date()
+
       const result = await userCollections.insertOne(user);
       res.send(result)
     })
 
 
-    app.get('/users/role/:email', async (req, res) =>{
-      const {email}= req.params
+    app.get('/users/role/:email', async (req, res) => {
+      const { email } = req.params
 
-      const query  ={email:email}
-      const  result = await userCollections.findOne(query)
+      const query = { email: email }
+      const result = await userCollections.findOne(query)
       console.log(result);
       res.send(result)
     })
 
-    app.post('/requests', async(req, res)=>{
+    app.post("/requests", verifyFBToken, async (req, res) => {
       const data = req.body;
-      data.createAt= new Date();
+      data.createAt = new Date();
+
       const result = await requestsCollection.insertOne(data);
-      res.send(result)
-    })
+      res.send(result);
+    });
 
 
     await client.db("admin").command({ ping: 1 });

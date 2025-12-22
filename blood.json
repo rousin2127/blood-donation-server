@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "blood-donation-5f7c2",
+  "private_key_id": "8f61edbb9c3f596d9f83a0fd3d31d7a08a14811f",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEuwIBADANBgkqhkiG9w0BAQEFAASCBKUwggShAgEAAoIBAQCnzzYR6q/5UFLv\nEFZqyW9IEKr241xpJwbHMTZxGRCtfbIxySY7kIseVXYS8oGz210v/UxueO6Kht4c\nSfXSQ6qUyvP1Ak/LYZvQxCnWbiO8WY3kIAo33Wm3grwgoK/G3sCu7x7FhnA/fWH/\nJP8tEh1JFafjoa9ekIjUzeFY+NihsqyO8LssdhSoBVG1A+gdyBneb/sAZ2RqjXIt\n5U5sL0pwUj2eS2rNhRByn4+mvuEgQZedZ9myWsMW410XpabicFIrIYGh7n8oM6YI\nb8KinJu2AvF/OOGAwiw5FL3PIuWA4rsdpEMgEJYsWIwuiPasV9uf7QJkI8YAPYWd\nKCC1tpZlAgMBAAECgf8KfOjkNcbJzjtgtaSxB+Xsmx4UUCF2cPn7eRft+aMRNMnu\nUqQRFPec7bpzdLSmiQ9J8IrWXLiL7+Hx4q16dsAyjHyy03IpQ/B5G8mBnWCeZPp5\nR4db9nqk/YbEg0Z5J3LjfA5wSfa6ARwe1jEcoAU0jCXyFCjhwCbNJhDvfp4LfQVZ\ntstidA22k9HAwR9+oI8dewwKEtjaAfHG3IjHdyqjv6ycOdS1/L+DUNosOcoN8+tu\nvKC5d7sIyCEzq5OPcgiGLPhGWMcdrNbhmd6BXqjPgIfVCmJ2W9WeOcClGlQXgBZg\n6AO9I13O4pBIm+7YZmn3IiquRKUrHtJ2td1EcMECgYEA2sYoPtICzHtX8vB/kMOx\n9jcL8xyGiNSBjcV0FoKX2c6HfWc86rYWyo+SKgEkjTydjF2HM5i2D3BRPpLJX8Xr\nNYL43KtmEhgX0hcspfZHyFeYGxy2w9qI59ePn0Gy6peiMaN68MFZLSIlGoP28B/r\nnRuE4rcysbwp9lbG/X4Rb4sCgYEAxF0GKsZ8RYKU2XtWU14VR8bBb5HyrMhfJ9uM\nPamYTvMlunincRpW7eIHjdRa72fEdRVfrrgda55ffsgP02wrnSTQvcF3lajciwo3\nGviCMHvVYQlepZpUhMCPMJ/AZ8v9q2pDCAxFueYtfvfOj0cYGKumAqX73UfTte3b\n45LEz88CgYEAr/7NjYwBOGLZo9SZqunjloE+GbuO9zCNcHGyLBGu+0dMdDPDK8aE\nmzvYh/YXY4+p5quvAnENtWnT0hTf7y4XRBsy/MLeABxlvVtrTa/Mm3zsHpOA7Bo4\nHNqq7aE6v8JwdqJfWqMQjGB1nNkgpJfpQaBLzN835wfKciPpPTBX8nUCgYBTARuV\nQ1fOrjcrg5ZnITMPpzWnauNRJFYM7CJpAmKupNuC6nOlPMQYRF57FpPl9VA3SfSr\nT4qoLkchuYHvFh+Nir1uKPTa34lygLvwe7HUutPk8+f9SrKFdzxQCodzmOg+6Gkz\nYrSqs2Dx9eBr8lp+Oziuj+lajX0xvz0fArCNQwKBgAP//mJB2eUd+RKAX4vbiCjY\nTSp6cqArYCB3/5N0YGgD5y2GzEeriRdQRHKjWNHhgW0lkLume075D9CgOyA9+pnS\nBPeJu/4OuCNg7Sz36XnmkPR3uhW73Yivq9Sswl8chgcy+GoUSRLr3++K+eLJ36zg\nyE8AICPey99DSWFhJjSR\n-----END PRIVATE KEY-----\n",
+  "client_email": "firebase-adminsdk-fbsvc@blood-donation-5f7c2.iam.gserviceaccount.com",
+  "client_id": "105667072635246415896",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40blood-donation-5f7c2.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
