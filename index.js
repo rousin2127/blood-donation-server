@@ -4,6 +4,15 @@ const cors = require('cors')
 require('dotenv').config()
 const port = process.env.PORT || 5000
 
+let stripe = null;
+try {
+  if (process.env.STRIPE_SECRET_KEY) {
+    stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+  }
+} catch (e) {
+  console.warn('Stripe not loaded:', e.message);
+}
+
 const app = express();
 app.use(cors({
   origin: [
@@ -77,6 +86,20 @@ async function run() {
     const database = client.db('bloodDonationDB');
     const userCollections = database.collection('user')
     const requestsCollection = database.collection('request')
+    const fundsCollection = database.collection('funds')
+
+    const verifyAdminOrVolunteer = async (req, res, next) => {
+      try {
+        const requester = await userCollections.findOne({ email: req.decoded_email });
+        if (!requester || !['admin', 'volunteer'].includes(requester.role)) {
+          return res.status(403).send({ message: 'Forbidden' });
+        }
+        next();
+      } catch (err) {
+        console.error(err);
+        return res.status(500).send({ message: 'Failed to verify role' });
+      }
+    };
 
     const verifyAdmin = async (req, res, next) => {
       try {
@@ -109,12 +132,17 @@ async function run() {
 
 
     app.get('/users/role/:email', async (req, res) => {
-      const { email } = req.params
+      try {
+        const email = decodeURIComponent(String(req.params.email || ''))
 
-      const query = { email: email }
-      const result = await userCollections.findOne(query)
-      console.log(result);
-      res.send(result)
+        const query = { email: email }
+        const result = await userCollections.findOne(query)
+        console.log(result);
+        res.send(result)
+      } catch (e) {
+        console.error(e);
+        res.status(400).send({ message: 'Invalid email parameter' });
+      }
     })
 
 
@@ -313,7 +341,55 @@ async function run() {
       }
     });
 
-    // donate: pending -> inprogress (private)
+    // update editable fields (owner or admin) — not volunteer
+    app.patch('/donation-requests/:id', verifyFBToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+        const email = req.decoded_email;
+        const actor = await userCollections.findOne({ email });
+        if (!actor) return res.status(404).send({ message: 'User not found' });
+        if (actor.role === 'volunteer') {
+          return res.status(403).send({ message: 'Volunteers cannot edit request details' });
+        }
+
+        const request = await requestsCollection.findOne({ _id: new ObjectId(id) });
+        if (!request) return res.status(404).send({ message: 'Not found' });
+        const isAdmin = actor.role === 'admin';
+        const isOwner = request.requesterEmail === email;
+        if (!isOwner && !isAdmin) {
+          return res.status(403).send({ message: 'Forbidden' });
+        }
+
+        const body = req.body || {};
+        const $set = {
+          recipientName: body.recipientName,
+          district: body.district,
+          upazila: body.upazila,
+          hospitalName: body.hospitalName,
+          address: body.address,
+          bloodGroup: body.bloodGroup,
+          donationDate: body.donationDate,
+          donationTime: body.donationTime,
+          message: body.message,
+        };
+        Object.keys($set).forEach((k) => {
+          if ($set[k] === undefined) delete $set[k];
+        });
+
+        if (Object.keys($set).length === 0) {
+          return res.status(400).send({ message: 'No fields to update' });
+        }
+
+        const result = await requestsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set }
+        );
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: 'Failed to update request' });
+      }
+    });
     app.patch('/donation-requests/:id/donate', verifyFBToken, async (req, res) => {
       try {
         const { id } = req.params;
@@ -375,16 +451,32 @@ async function run() {
           return res.status(403).send({ message: 'Forbidden' });
         }
 
-        // donor: only allow done/canceled when inprogress
-        if (!isAdmin && (status === 'done' || status === 'canceled') && request.status !== 'inprogress') {
-          return res.status(400).send({ message: 'Only inprogress requests can be marked done/canceled' });
+        // admin: any valid status
+        if (isAdmin) {
+          const result = await requestsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status } }
+          );
+          return res.send(result);
+        }
+
+        // donor (owner, not admin): only done or canceled, and only from inprogress
+        if (!['done', 'canceled'].includes(status)) {
+          return res.status(400).send({
+            message: 'Donors may only set status to done or canceled',
+          });
+        }
+        if (request.status !== 'inprogress') {
+          return res.status(400).send({
+            message: 'Only in-progress requests can be marked done or canceled',
+          });
         }
 
         const result = await requestsCollection.updateOne(
           { _id: new ObjectId(id) },
           { $set: { status } }
         );
-        res.send(result);
+        return res.send(result);
       } catch (error) {
         console.error(error);
         res.status(500).send({ message: 'Failed to update status' });
@@ -398,6 +490,9 @@ async function run() {
         const email = req.decoded_email;
         const requester = await userCollections.findOne({ email });
         if (!requester) return res.status(404).send({ message: 'User not found' });
+        if (requester.role === 'volunteer') {
+          return res.status(403).send({ message: 'Volunteers cannot delete donation requests' });
+        }
 
         const request = await requestsCollection.findOne({ _id: new ObjectId(id) });
         if (!request) return res.status(404).send({ message: 'Not found' });
@@ -443,6 +538,125 @@ async function run() {
       } catch (error) {
         console.error(error);
         res.status(500).send({ message: 'Failed to fetch donation requests' });
+      }
+    });
+
+    // --- Dashboard stats (admin + volunteer home cards) ---
+    app.get('/dashboard-stats', verifyFBToken, verifyAdminOrVolunteer, async (req, res) => {
+      try {
+        const totalDonors = await userCollections.countDocuments({
+          role: { $nin: ['admin', 'volunteer'] },
+        });
+        const fundsAgg = await fundsCollection
+          .aggregate([{ $group: { _id: null, total: { $sum: '$amount' } } }])
+          .toArray();
+        const totalFunds = fundsAgg[0]?.total || 0;
+        const totalRequests = await requestsCollection.countDocuments({});
+        res.send({ totalDonors, totalFunds, totalRequests });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: 'Failed to load stats' });
+      }
+    });
+
+    // --- All donation requests (admin + volunteer) ---
+    app.get('/all-donation-requests', verifyFBToken, verifyAdminOrVolunteer, async (req, res) => {
+      try {
+        const status = req.query.status;
+        const query = {};
+        if (status && status !== 'all') query.status = status;
+        const list = await requestsCollection
+          .find(query)
+          .sort({ createAt: -1 })
+          .toArray();
+        res.send(list);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: 'Failed to fetch requests' });
+      }
+    });
+
+    // --- Funding (Stripe) ---
+    app.get('/funding', verifyFBToken, async (req, res) => {
+      try {
+        const funds = await fundsCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .toArray();
+        const agg = await fundsCollection
+          .aggregate([{ $group: { _id: null, total: { $sum: '$amount' } } }])
+          .toArray();
+        const totalAmount = agg[0]?.total || 0;
+        res.send({ funds, totalAmount });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: 'Failed to fetch funds' });
+      }
+    });
+
+    app.post('/funding/create-payment-intent', verifyFBToken, async (req, res) => {
+      try {
+        if (!stripe) {
+          return res.status(503).send({ message: 'Stripe is not configured (STRIPE_SECRET_KEY)' });
+        }
+        const amountUsd = Number(req.body?.amount);
+        if (!Number.isFinite(amountUsd) || amountUsd < 1 || amountUsd > 5000) {
+          return res.status(400).send({ message: 'Amount must be between 1 and 5000 (USD)' });
+        }
+        const donor = await userCollections.findOne({ email: req.decoded_email });
+        if (!donor || donor.status === 'blocked') {
+          return res.status(403).send({ message: 'Cannot create payment' });
+        }
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: Math.round(amountUsd * 100),
+          currency: 'usd',
+          automatic_payment_methods: { enabled: true },
+          metadata: {
+            donorEmail: req.decoded_email,
+          },
+        });
+        res.send({ clientSecret: paymentIntent.client_secret });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: error.message || 'Failed to create payment' });
+      }
+    });
+
+    app.post('/funding/confirm', verifyFBToken, async (req, res) => {
+      try {
+        if (!stripe) {
+          return res.status(503).send({ message: 'Stripe is not configured' });
+        }
+        const paymentIntentId = String(req.body?.paymentIntentId || '');
+        if (!paymentIntentId) {
+          return res.status(400).send({ message: 'paymentIntentId required' });
+        }
+        const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
+        if (pi.status !== 'succeeded') {
+          return res.status(400).send({ message: 'Payment not completed' });
+        }
+        if (pi.metadata?.donorEmail !== req.decoded_email) {
+          return res.status(403).send({ message: 'Payment does not belong to this user' });
+        }
+        const existing = await fundsCollection.findOne({ paymentIntentId });
+        if (existing) {
+          return res.send({ inserted: false, fund: existing });
+        }
+        const userDoc = await userCollections.findOne({ email: req.decoded_email });
+        const amountUsd = (pi.amount_received || pi.amount || 0) / 100;
+        const doc = {
+          donorEmail: req.decoded_email,
+          donorName: userDoc?.displayName || userDoc?.name || '',
+          amount: amountUsd,
+          currency: pi.currency || 'usd',
+          paymentIntentId,
+          createdAt: new Date(),
+        };
+        await fundsCollection.insertOne(doc);
+        res.send({ inserted: true, fund: doc });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: error.message || 'Failed to confirm payment' });
       }
     });
 
