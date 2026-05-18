@@ -15,10 +15,7 @@ try {
 
 const app = express();
 app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "https://future-datum-479320-k7.web.app"
-  ],
+  origin: "*",
   credentials: true
 }));
 
