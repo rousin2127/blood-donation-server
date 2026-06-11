@@ -84,6 +84,33 @@ async function run() {
     const userCollections = database.collection('user')
     const requestsCollection = database.collection('request')
     const fundsCollection = database.collection('funds')
+    const contactsCollection = database.collection('contacts')
+
+    const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']
+    const isValidEmail = (email) =>
+      typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+
+    const sanitizePublicRequest = (doc) => {
+      if (!doc) return null
+      const out = {
+        _id: doc._id,
+        recipientName: doc.recipientName,
+        district: doc.district,
+        upazila: doc.upazila,
+        hospitalName: doc.hospitalName,
+        address: doc.address,
+        bloodGroup: doc.bloodGroup,
+        donationDate: doc.donationDate,
+        donationTime: doc.donationTime,
+        message: doc.message,
+        status: doc.status,
+        createAt: doc.createAt,
+      }
+      if (doc.status === 'inprogress') {
+        out.donorName = doc.donorName || ''
+      }
+      return out
+    }
 
     const verifyAdminOrVolunteer = async (req, res, next) => {
       try {
@@ -112,13 +139,35 @@ async function run() {
     };
 
     app.post('/users', async (req, res) => {
-      const user = req.body;
-      user.role = user.role || 'donor'; 
-      user.status = 'active'
-      user.createAt = new Date()
-
-      const result = await userCollections.insertOne(user);
-      res.send(result)
+      try {
+        const user = req.body || {};
+        const email = (user.email || '').trim().toLowerCase();
+        if (!isValidEmail(email)) {
+          return res.status(400).send({ message: 'Valid email is required' });
+        }
+        if (!user.displayName || String(user.displayName).trim().length < 2) {
+          return res.status(400).send({ message: 'Name is required' });
+        }
+        if (!user.blood || !BLOOD_GROUPS.includes(user.blood)) {
+          return res.status(400).send({ message: 'Valid blood group is required' });
+        }
+        if (!user.district || !user.upazila) {
+          return res.status(400).send({ message: 'District and upazila are required' });
+        }
+        const existing = await userCollections.findOne({ email });
+        if (existing) {
+          return res.status(409).send({ message: 'User already registered' });
+        }
+        user.email = email;
+        user.role = user.role || 'donor';
+        user.status = 'active';
+        user.createAt = new Date();
+        const result = await userCollections.insertOne(user);
+        res.status(201).send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: 'Failed to register user' });
+      }
     })
 
     app.get('/users', verifyFBToken, verifyAdmin, async (req, res) => {
@@ -308,6 +357,246 @@ async function run() {
       } catch (error) {
         console.error(error);
         res.status(500).send({ message: 'Failed to create request' });
+      }
+    });
+
+    // --- Public home statistics ---
+    app.get('/home-stats', async (req, res) => {
+      try {
+        const totalDonors = await userCollections.countDocuments({
+          role: { $nin: ['admin', 'volunteer'] },
+          status: 'active',
+        });
+        const pendingRequests = await requestsCollection.countDocuments({ status: 'pending' });
+        const completedDonations = await requestsCollection.countDocuments({ status: 'done' });
+        const fundsAgg = await fundsCollection
+          .aggregate([{ $group: { _id: null, total: { $sum: '$amount' } } }])
+          .toArray();
+        const totalFundsRaised = fundsAgg[0]?.total || 0;
+        const bloodBreakdown = await requestsCollection
+          .aggregate([
+            { $match: { status: 'pending' } },
+            { $group: { _id: '$bloodGroup', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ])
+          .toArray();
+        res.send({
+          totalDonors,
+          pendingRequests,
+          completedDonations,
+          totalFundsRaised,
+          bloodBreakdown,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: 'Failed to load home stats' });
+      }
+    });
+
+    // --- Contact form ---
+    app.post('/contacts', async (req, res) => {
+      try {
+        const { name, email, subject, message } = req.body || {};
+        const trimmedName = String(name || '').trim();
+        const trimmedEmail = String(email || '').trim().toLowerCase();
+        const trimmedSubject = String(subject || '').trim();
+        const trimmedMessage = String(message || '').trim();
+        if (trimmedName.length < 2) {
+          return res.status(400).send({ message: 'Name must be at least 2 characters' });
+        }
+        if (!isValidEmail(trimmedEmail)) {
+          return res.status(400).send({ message: 'Valid email is required' });
+        }
+        if (trimmedSubject.length < 3) {
+          return res.status(400).send({ message: 'Subject is required' });
+        }
+        if (trimmedMessage.length < 10) {
+          return res.status(400).send({ message: 'Message must be at least 10 characters' });
+        }
+        const doc = {
+          name: trimmedName,
+          email: trimmedEmail,
+          subject: trimmedSubject,
+          message: trimmedMessage,
+          status: 'new',
+          createdAt: new Date(),
+        };
+        const result = await contactsCollection.insertOne(doc);
+        res.status(201).send({ insertedId: result.insertedId, message: 'Message received' });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: 'Failed to save contact message' });
+      }
+    });
+
+    app.get('/contacts', verifyFBToken, verifyAdmin, async (req, res) => {
+      try {
+        const page = Math.max(0, Number(req.query.page) || 0);
+        const size = Math.min(50, Math.max(1, Number(req.query.size) || 10));
+        const list = await contactsCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .skip(page * size)
+          .limit(size)
+          .toArray();
+        const total = await contactsCollection.countDocuments();
+        res.send({ contacts: list, total, page, size });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: 'Failed to fetch contacts' });
+      }
+    });
+
+    // --- Explore: filter, sort, pagination (public) ---
+    app.get('/explore/donation-requests', async (req, res) => {
+      try {
+        const {
+          bloodGroup,
+          district,
+          upazila,
+          status = 'pending',
+          sortBy = 'createAt',
+          order = 'desc',
+          page = '0',
+          size = '12',
+        } = req.query;
+
+        const query = {};
+        if (status && status !== 'all') query.status = status;
+        if (bloodGroup && bloodGroup !== 'all') query.bloodGroup = bloodGroup;
+        if (district && district !== 'all') query.district = district;
+        if (upazila && upazila !== 'all') query.upazila = upazila;
+
+        const allowedSort = ['createAt', 'donationDate', 'bloodGroup', 'recipientName'];
+        const sortField = allowedSort.includes(sortBy) ? sortBy : 'createAt';
+        const sortOrder = order === 'asc' ? 1 : -1;
+        const pageNum = Math.max(0, Number(page) || 0);
+        const pageSize = Math.min(48, Math.max(1, Number(size) || 12));
+
+        const [items, total] = await Promise.all([
+          requestsCollection
+            .find(query)
+            .sort({ [sortField]: sortOrder })
+            .skip(pageNum * pageSize)
+            .limit(pageSize)
+            .toArray(),
+          requestsCollection.countDocuments(query),
+        ]);
+
+        res.send({
+          items: items.map(sanitizePublicRequest),
+          total,
+          page: pageNum,
+          size: pageSize,
+          totalPages: Math.ceil(total / pageSize) || 0,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: 'Failed to explore requests' });
+      }
+    });
+
+    // --- Public donation details + related ---
+    app.get('/public/donation-requests/:id', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const request = await requestsCollection.findOne({ _id: new ObjectId(id) });
+        if (!request) return res.status(404).send({ message: 'Not found' });
+        res.send(sanitizePublicRequest(request));
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: 'Failed to fetch request' });
+      }
+    });
+
+    app.get('/public/donation-requests/:id/related', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const request = await requestsCollection.findOne({ _id: new ObjectId(id) });
+        if (!request) return res.status(404).send({ message: 'Not found' });
+        const related = await requestsCollection
+          .find({
+            _id: { $ne: new ObjectId(id) },
+            status: 'pending',
+            bloodGroup: request.bloodGroup,
+            district: request.district,
+          })
+          .sort({ createAt: -1 })
+          .limit(4)
+          .toArray();
+        res.send(related.map(sanitizePublicRequest));
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: 'Failed to fetch related requests' });
+      }
+    });
+
+    // --- Chart analytics (admin + volunteer) ---
+    app.get('/analytics/charts', verifyFBToken, verifyAdminOrVolunteer, async (req, res) => {
+      try {
+        const requestsByStatus = await requestsCollection
+          .aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }])
+          .toArray();
+        const donorsByBlood = await userCollections
+          .aggregate([
+            { $match: { role: { $nin: ['admin', 'volunteer'] } } },
+            { $group: { _id: '$blood', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ])
+          .toArray();
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+        const requestsOverTime = await requestsCollection
+          .aggregate([
+            { $match: { createAt: { $gte: sixMonthsAgo } } },
+            {
+              $group: {
+                _id: {
+                  year: { $year: '$createAt' },
+                  month: { $month: '$createAt' },
+                },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { '_id.year': 1, '_id.month': 1 } },
+          ])
+          .toArray();
+        const fundsOverTime = await fundsCollection
+          .aggregate([
+            { $match: { createdAt: { $gte: sixMonthsAgo } } },
+            {
+              $group: {
+                _id: {
+                  year: { $year: '$createdAt' },
+                  month: { $month: '$createdAt' },
+                },
+                total: { $sum: '$amount' },
+              },
+            },
+            { $sort: { '_id.year': 1, '_id.month': 1 } },
+          ])
+          .toArray();
+        res.send({
+          requestsByStatus: requestsByStatus.map((r) => ({
+            name: r._id || 'unknown',
+            value: r.count,
+          })),
+          donorsByBlood: donorsByBlood.map((r) => ({
+            name: r._id || 'unknown',
+            value: r.count,
+          })),
+          requestsOverTime: requestsOverTime.map((r) => ({
+            label: `${r._id.year}-${String(r._id.month).padStart(2, '0')}`,
+            count: r.count,
+          })),
+          fundsOverTime: fundsOverTime.map((r) => ({
+            label: `${r._id.year}-${String(r._id.month).padStart(2, '0')}`,
+            amount: r.total,
+          })),
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: 'Failed to load chart data' });
       }
     });
 
